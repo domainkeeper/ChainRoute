@@ -5,7 +5,8 @@ import uuid
 from app.db.session import get_db
 from app.schemas.schemas import (
     UserCreate, UserLogin, UserResponse, TokenResponse, RefreshTokenRequest,
-    VehicleCreate, VehicleResponse,
+    UserUpdateWallet, UserListResponse,
+    VehicleCreate, VehicleResponse, VehicleListResponse,
     ShipmentCreate, ShipmentAssign, CheckpointCreate, CustodyTransferCreate,
     ShipmentResponse, CheckpointResponse, CustodyTransferResponse,
     ShipmentHistoryResponse, WriteResponse, ErrorResponse, ShipmentListResponse
@@ -104,6 +105,125 @@ async def refresh_token(refresh_data: RefreshTokenRequest, db: AsyncSession = De
         access_token=access_token,
         refresh_token=new_refresh_token,
         user=UserResponse.model_validate(user)
+    )
+
+
+@router.post("/auth/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
+async def register(
+    user_data: UserCreate,
+    db: AsyncSession = Depends(get_db)
+):
+    try:
+        user = await AuthService.register_user(db, user_data)
+        access_token, refresh_token = AuthService.create_tokens(user)
+        return TokenResponse(
+            access_token=access_token,
+            refresh_token=refresh_token,
+            user=UserResponse.model_validate(user)
+        )
+    except ValueError as e:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail={"error": {"code": "VALIDATION_ERROR", "message": str(e)}}
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": {"code": "INTERNAL_ERROR", "message": str(e)}}
+        )
+
+
+@router.get("/users/me", response_model=UserResponse)
+async def get_current_user_profile(
+    current_user: User = Depends(get_current_user)
+):
+    return UserResponse.model_validate(current_user)
+
+
+@router.patch("/users/me", response_model=UserResponse)
+async def update_current_user_wallet(
+    wallet_data: UserUpdateWallet,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    current_user.wallet_address = wallet_data.wallet_address
+    await db.commit()
+    await db.refresh(current_user)
+    return UserResponse.model_validate(current_user)
+
+
+@router.get("/users", response_model=UserListResponse)
+async def list_users(
+    role: Optional[UserRole] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role([UserRole.ADMIN]))
+):
+    from sqlalchemy import select, func
+    query = select(User)
+    if role:
+        query = query.where(User.role == role)
+    query = query.order_by(User.created_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(query)
+    users = result.scalars().all()
+
+    count_query = select(func.count(User.id))
+    if role:
+        count_query = count_query.where(User.role == role)
+    count_result = await db.execute(count_query)
+    total = count_result.scalar()
+
+    return UserListResponse(
+        users=[UserResponse.model_validate(u) for u in users],
+        total=total
+    )
+
+
+@router.post("/vehicles", response_model=VehicleResponse, status_code=status.HTTP_201_CREATED)
+async def create_vehicle(
+    vehicle_data: VehicleCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(require_role([UserRole.TRANSPORTER]))
+):
+    vehicle = await VehicleService.create_vehicle(db, current_user.id, vehicle_data)
+    return VehicleResponse.model_validate(vehicle)
+
+
+@router.get("/vehicles", response_model=VehicleListResponse)
+async def list_vehicles(
+    transporter_id: Optional[uuid.UUID] = None,
+    skip: int = 0,
+    limit: int = 100,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user)
+):
+    # If transporter_id provided, require admin role
+    if transporter_id is not None:
+        if current_user.role != UserRole.ADMIN:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "FORBIDDEN_ROLE", "message": "Admin role required to list vehicles by transporter"}}
+            )
+        target_transporter_id = transporter_id
+    else:
+        # Default to current user's vehicles (must be transporter)
+        if current_user.role != UserRole.TRANSPORTER:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail={"error": {"code": "FORBIDDEN_ROLE", "message": "Transporter role required to list own vehicles"}}
+            )
+        target_transporter_id = current_user.id
+
+    vehicles = await VehicleService.get_vehicles_by_transporter(db, target_transporter_id)
+    # Apply pagination manually since service doesn't support it
+    total = len(vehicles)
+    paginated = vehicles[skip:skip + limit]
+    return VehicleListResponse(
+        vehicles=[VehicleResponse.model_validate(v) for v in paginated],
+        total=total
     )
 
 

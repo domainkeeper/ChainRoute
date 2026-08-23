@@ -42,7 +42,7 @@ class User(Base):
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
-    role = Column(Enum(UserRole), nullable=False)
+    role = Column(Enum(UserRole, values_callable=lambda x: [e.value for e in x]), nullable=False)
     wallet_address = Column(String(42), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -50,7 +50,7 @@ class User(Base):
     shipments_as_manufacturer = relationship("Shipment", foreign_keys="Shipment.manufacturer_id", back_populates="manufacturer")
     shipments_as_transporter = relationship("Shipment", foreign_keys="Shipment.current_transporter_id", back_populates="current_transporter")
     shipments_as_custodian = relationship("Shipment", foreign_keys="Shipment.current_custodian_id", back_populates="current_custodian")
-    checkpoints = relationship("Checkpoint", back_populates="recorded_by")
+    checkpoints = relationship("Checkpoint", back_populates="recorded_by_user")
     custody_transfers_from = relationship("CustodyTransfer", foreign_keys="CustodyTransfer.from_user_id", back_populates="from_user")
     custody_transfers_to = relationship("CustodyTransfer", foreign_keys="CustodyTransfer.to_user_id", back_populates="to_user")
     shipment_events = relationship("ShipmentEvent", back_populates="actor")

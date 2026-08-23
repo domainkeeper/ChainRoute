@@ -41,6 +41,11 @@ class UserBase(BaseModel):
 
 class UserCreate(UserBase):
     password: str = Field(..., min_length=8)
+    wallet_address: Optional[str] = None
+
+
+class UserUpdateWallet(BaseModel):
+    wallet_address: Optional[str] = None
 
 
 class UserLogin(BaseModel):
@@ -83,6 +88,16 @@ class VehicleResponse(VehicleBase):
 
     class Config:
         from_attributes = True
+
+
+class VehicleListResponse(BaseModel):
+    vehicles: List[VehicleResponse]
+    total: int
+
+
+class UserListResponse(BaseModel):
+    users: List[UserResponse]
+    total: int
 
 
 class ShipmentBase(BaseModel):

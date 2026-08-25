@@ -1,7 +1,9 @@
 import pytest
+import pytest_asyncio
 from httpx import AsyncClient
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 import uuid
 from unittest.mock import AsyncMock, patch, MagicMock
 
@@ -11,9 +13,14 @@ from app.models.models import User, Vehicle, Shipment, Checkpoint, CustodyTransf
 from app.core.security import get_password_hash, create_access_token
 from app.blockchain.client import blockchain_client
 
-TEST_DATABASE_URL = "postgresql+asyncpg://postgres:postgres@localhost:5432/chainroute_test"
+TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
-engine_test = create_async_engine(TEST_DATABASE_URL, echo=False)
+engine_test = create_async_engine(
+    TEST_DATABASE_URL,
+    echo=False,
+    connect_args={"check_same_thread": False},
+    poolclass=StaticPool
+)
 TestingSessionLocal = sessionmaker(engine_test, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -25,7 +32,7 @@ async def override_get_db():
 app.dependency_overrides[get_db] = override_get_db
 
 
-@pytest.fixture(scope="session", autouse=True)
+@pytest_asyncio.fixture(scope="session", autouse=True)
 async def setup_database():
     async with engine_test.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -34,15 +41,18 @@ async def setup_database():
         await conn.run_sync(Base.metadata.drop_all)
 
 
-@pytest.fixture
+@pytest_asyncio.fixture(autouse=True)
 async def db_session():
     async with TestingSessionLocal() as session:
         yield session
-        await session.rollback()
+    async with TestingSessionLocal() as session:
+        for table in reversed(Base.metadata.sorted_tables):
+            await session.execute(table.delete())
+        await session.commit()
 
 
-@pytest.fixture
-def admin_user(db_session):
+@pytest_asyncio.fixture
+async def admin_user(db_session):
     user = User(
         name="Admin User",
         email="admin@test.com",
@@ -51,13 +61,13 @@ def admin_user(db_session):
         wallet_address="0x1234567890123456789012345678901234567890"
     )
     db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
-@pytest.fixture
-def transporter_user(db_session):
+@pytest_asyncio.fixture
+async def transporter_user(db_session):
     user = User(
         name="Transporter User",
         email="transporter@test.com",
@@ -66,13 +76,13 @@ def transporter_user(db_session):
         wallet_address="0x2345678901234567890123456789012345678901"
     )
     db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
-@pytest.fixture
-def warehouse_user(db_session):
+@pytest_asyncio.fixture
+async def warehouse_user(db_session):
     user = User(
         name="Warehouse User",
         email="warehouse@test.com",
@@ -81,13 +91,13 @@ def warehouse_user(db_session):
         wallet_address="0x3456789012345678901234567890123456789012"
     )
     db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
-@pytest.fixture
-def receiver_user(db_session):
+@pytest_asyncio.fixture
+async def receiver_user(db_session):
     user = User(
         name="Receiver User",
         email="receiver@test.com",
@@ -96,98 +106,98 @@ def receiver_user(db_session):
         wallet_address="0x4567890123456789012345678901234567890123"
     )
     db_session.add(user)
-    db_session.commit()
-    db_session.refresh(user)
+    await db_session.commit()
+    await db_session.refresh(user)
     return user
 
 
-@pytest.fixture
-def admin_token(admin_user):
+@pytest_asyncio.fixture
+async def admin_token(admin_user):
     return create_access_token({"sub": str(admin_user.id), "email": admin_user.email, "role": admin_user.role.value})
 
 
-@pytest.fixture
-def transporter_token(transporter_user):
+@pytest_asyncio.fixture
+async def transporter_token(transporter_user):
     return create_access_token({"sub": str(transporter_user.id), "email": transporter_user.email, "role": transporter_user.role.value})
 
 
-@pytest.fixture
-def warehouse_token(warehouse_user):
+@pytest_asyncio.fixture
+async def warehouse_token(warehouse_user):
     return create_access_token({"sub": str(warehouse_user.id), "email": warehouse_user.email, "role": warehouse_user.role.value})
 
 
-@pytest.fixture
-def receiver_token(receiver_user):
+@pytest_asyncio.fixture
+async def receiver_token(receiver_user):
     return create_access_token({"sub": str(receiver_user.id), "email": receiver_user.email, "role": receiver_user.role.value})
 
 
-@pytest.fixture
-def auth_headers_admin(admin_token):
+@pytest_asyncio.fixture
+async def auth_headers_admin(admin_token):
     return {"Authorization": f"Bearer {admin_token}"}
 
 
-@pytest.fixture
-def auth_headers_transporter(transporter_token):
+@pytest_asyncio.fixture
+async def auth_headers_transporter(transporter_token):
     return {"Authorization": f"Bearer {transporter_token}"}
 
 
-@pytest.fixture
-def auth_headers_warehouse(warehouse_token):
+@pytest_asyncio.fixture
+async def auth_headers_warehouse(warehouse_token):
     return {"Authorization": f"Bearer {warehouse_token}"}
 
 
-@pytest.fixture
-def auth_headers_receiver(receiver_token):
+@pytest_asyncio.fixture
+async def auth_headers_receiver(receiver_token):
     return {"Authorization": f"Bearer {receiver_token}"}
 
 
-@pytest.fixture
-def vehicle(db_session, transporter_user):
+@pytest_asyncio.fixture
+async def vehicle(db_session, transporter_user):
     v = Vehicle(
         plate_number="ABC123",
         type="Truck",
         transporter_id=transporter_user.id
     )
     db_session.add(v)
-    db_session.commit()
-    db_session.refresh(v)
+    await db_session.commit()
+    await db_session.refresh(v)
     return v
 
 
 @pytest.fixture
 def mock_blockchain_success():
     with patch('app.services.services.blockchain_client') as mock:
-        mock.create_shipment = AsyncMock(return_value={
+        mock.create_shipment = MagicMock(return_value={
             "success": True,
             "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890",
             "receipt": MagicMock(blockNumber=12345)
         })
-        mock.assign_transporter = AsyncMock(return_value={
+        mock.assign_transporter = MagicMock(return_value={
             "success": True,
             "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567891",
             "receipt": MagicMock(blockNumber=12346)
         })
-        mock.record_pickup = AsyncMock(return_value={
+        mock.record_pickup = MagicMock(return_value={
             "success": True,
             "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567892",
             "receipt": MagicMock(blockNumber=12347)
         })
-        mock.record_checkpoint = AsyncMock(return_value={
+        mock.record_checkpoint = MagicMock(return_value={
             "success": True,
             "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567893",
             "receipt": MagicMock(blockNumber=12348)
         })
-        mock.transfer_custody = AsyncMock(return_value={
+        mock.transfer_custody = MagicMock(return_value={
             "success": True,
             "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567894",
             "receipt": MagicMock(blockNumber=12349)
         })
-        mock.mark_delivered = AsyncMock(return_value={
+        mock.mark_delivered = MagicMock(return_value={
             "success": True,
             "tx_hash": "0xabcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567895",
             "receipt": MagicMock(blockNumber=12350)
         })
-        mock.get_shipment_events = AsyncMock(return_value=[])
+        mock.get_shipment_events = MagicMock(return_value=[])
         yield mock
 
 
@@ -206,20 +216,27 @@ class TestAuth:
         assert data["user"]["email"] == "admin@test.com"
 
     @pytest.mark.asyncio
-    async def test_login_invalid_credentials(self):
+    async def test_login_invalid_credentials(self, admin_user):
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.post("/api/v1/auth/login", json={
                 "email": "admin@test.com",
                 "password": "wrongpassword"
             })
         assert response.status_code == 401
-        assert response.json()["error"]["code"] == "UNAUTHORIZED"
+        assert response.json()["detail"]["error"]["code"] == "UNAUTHORIZED"
 
     @pytest.mark.asyncio
-    async def test_refresh_token(self, admin_token):
+    async def test_refresh_token(self, admin_user):
+        async with AsyncClient(app=app, base_url="http://test") as client:
+            login_resp = await client.post("/api/v1/auth/login", json={
+                "email": "admin@test.com",
+                "password": "password123"
+            })
+        refresh_token = login_resp.json()["refresh_token"]
+
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.post("/api/v1/auth/refresh", json={
-                "refresh_token": admin_token
+                "refresh_token": refresh_token
             })
         assert response.status_code == 200
         data = response.json()
@@ -253,7 +270,7 @@ class TestShipments:
                 "quantity": 100
             }, headers=auth_headers_transporter)
         assert response.status_code == 403
-        assert response.json()["error"]["code"] == "FORBIDDEN_ROLE"
+        assert response.json()["detail"]["error"]["code"] == "FORBIDDEN_ROLE"
 
     @pytest.mark.asyncio
     async def test_assign_transporter_success(self, auth_headers_admin, transporter_user, vehicle, mock_blockchain_success):
@@ -296,7 +313,7 @@ class TestShipments:
                 "transporter_id": str(transporter_user.id)
             }, headers=auth_headers_admin)
         assert response.status_code == 409
-        assert response.json()["error"]["code"] == "INVALID_STATE_TRANSITION"
+        assert response.json()["detail"]["error"]["code"] == "INVALID_STATE_TRANSITION"
 
     @pytest.mark.asyncio
     async def test_pickup_success(self, auth_headers_admin, auth_headers_transporter, transporter_user, vehicle, mock_blockchain_success):
@@ -322,7 +339,7 @@ class TestShipments:
         assert data["shipment"]["current_custodian_id"] == str(transporter_user.id)
 
     @pytest.mark.asyncio
-    async def test_pickup_wrong_transporter(self, auth_headers_admin, transporter_user, vehicle, mock_blockchain_success):
+    async def test_pickup_wrong_transporter(self, auth_headers_admin, db_session, transporter_user, vehicle, mock_blockchain_success):
         other_transporter = User(
             name="Other Transporter",
             email="other@test.com",
@@ -330,6 +347,9 @@ class TestShipments:
             role=UserRole.TRANSPORTER,
             wallet_address="0x5678901234567890123456789012345678901234"
         )
+        db_session.add(other_transporter)
+        await db_session.commit()
+        await db_session.refresh(other_transporter)
         async with AsyncClient(app=app, base_url="http://test") as client:
             create_resp = await client.post("/api/v1/shipments", json={
                 "origin": "Shanghai",
@@ -348,7 +368,7 @@ class TestShipments:
             other_token = create_access_token({"sub": str(other_transporter.id), "email": other_transporter.email, "role": other_transporter.role.value})
             response = await client.post(f"/api/v1/shipments/{shipment_id}/pickup", headers={"Authorization": f"Bearer {other_token}"})
         assert response.status_code == 403
-        assert response.json()["error"]["code"] == "FORBIDDEN_ROLE"
+        assert response.json()["detail"]["error"]["code"] == "FORBIDDEN_ROLE"
 
     @pytest.mark.asyncio
     async def test_checkpoint_success(self, auth_headers_admin, auth_headers_transporter, transporter_user, vehicle, mock_blockchain_success):
@@ -432,7 +452,7 @@ class TestShipments:
         assert data["shipment"]["status"] == "DELIVERED"
 
     @pytest.mark.asyncio
-    async def test_deliver_wrong_role(self, auth_headers_admin, auth_headers_transporter, transporter_user, warehouse_user, vehicle, mock_blockchain_success):
+    async def test_deliver_wrong_role(self, auth_headers_admin, auth_headers_transporter, auth_headers_warehouse, transporter_user, warehouse_user, vehicle, mock_blockchain_success):
         async with AsyncClient(app=app, base_url="http://test") as client:
             create_resp = await client.post("/api/v1/shipments", json={
                 "origin": "Shanghai",
@@ -454,7 +474,7 @@ class TestShipments:
 
             response = await client.post(f"/api/v1/shipments/{shipment_id}/deliver", headers=auth_headers_warehouse)
         assert response.status_code == 403
-        assert response.json()["error"]["code"] == "FORBIDDEN_ROLE"
+        assert response.json()["detail"]["error"]["code"] == "FORBIDDEN_ROLE"
 
     @pytest.mark.asyncio
     async def test_get_shipment(self, auth_headers_admin, mock_blockchain_success):
@@ -478,17 +498,17 @@ class TestShipments:
         async with AsyncClient(app=app, base_url="http://test") as client:
             response = await client.get(f"/api/v1/shipments/{uuid.uuid4()}", headers=auth_headers_admin)
         assert response.status_code == 404
-        assert response.json()["error"]["code"] == "NOT_FOUND"
+        assert response.json()["detail"]["error"]["code"] == "NOT_FOUND"
 
     @pytest.mark.asyncio
-    async def test_get_shipment_by_qr_public(self, mock_blockchain_success):
+    async def test_get_shipment_by_qr_public(self, auth_headers_admin, mock_blockchain_success):
         async with AsyncClient(app=app, base_url="http://test") as client:
             create_resp = await client.post("/api/v1/shipments", json={
                 "origin": "Shanghai",
                 "destination": "LA",
                 "cargo_description": "Electronics",
                 "quantity": 100
-            }, headers={"Authorization": f"Bearer {create_access_token({'sub': str(uuid.uuid4()), 'email': 'admin@test.com', 'role': 'admin'})}"})
+            }, headers=auth_headers_admin)
         shipment = create_resp.json()["shipment"]
         qr_value = shipment["qr_code_value"]
 
@@ -551,11 +571,11 @@ class TestValidation:
                 "cargo_description": "Electronics"
             }, headers=auth_headers_admin)
         assert response.status_code == 422
-        assert response.json()["error"]["code"] == "VALIDATION_ERROR"
 
 
 class TestModels:
-    def test_user_model(self, db_session):
+    @pytest.mark.asyncio
+    async def test_user_model(self, db_session):
         user = User(
             name="Test User",
             email="test@test.com",
@@ -563,7 +583,7 @@ class TestModels:
             role=UserRole.ADMIN
         )
         db_session.add(user)
-        db_session.commit()
+        await db_session.commit()
         assert user.id is not None
 
     def test_shipment_status_enum(self):

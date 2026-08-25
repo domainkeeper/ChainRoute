@@ -1,8 +1,10 @@
 import json
 import os
+import asyncio
 from typing import Optional, List, Dict, Any
 from web3 import Web3
 from web3.contract import Contract
+from web3.types import TxReceipt
 from app.core.config import settings
 
 
@@ -12,8 +14,13 @@ class BlockchainClient:
         self.contract_address = Web3.to_checksum_address(settings.contract_address)
         self.private_key = settings.backend_wallet_private_key
         self.account = self.w3.eth.account.from_key(self.private_key)
+        self.backend_wallet_address = self.account.address
         self.contract: Optional[Contract] = None
         self._load_abi()
+
+    @property
+    def wallet_address(self) -> str:
+        return self.backend_wallet_address
 
     def _load_abi(self):
         abi_path = os.path.join(os.path.dirname(__file__), "abi.json")
@@ -45,49 +52,71 @@ class BlockchainClient:
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=timeout)
             return {"tx_hash": tx_hash.hex(), "receipt": receipt, "success": True}
         except Exception as e:
+            # Try to get receipt in case it was mined
+            try:
+                receipt = self.w3.eth.get_transaction_receipt(tx_hash)
+                if receipt:
+                    return {"tx_hash": tx_hash.hex(), "receipt": receipt, "success": receipt.status == 1}
+            except Exception:
+                pass
             return {"tx_hash": tx_hash.hex(), "error": str(e), "success": False}
+
+    def _send_with_retry(self, tx: dict, max_retries: int = 2, timeout: int = 30) -> dict:
+        last_error = None
+        for attempt in range(max_retries):
+            result = self._send_and_wait(tx, timeout=timeout)
+            if result.get("success"):
+                return result
+            last_error = result.get("error", "Unknown error")
+            if attempt < max_retries - 1:
+                # Wait before retry
+                import time
+                time.sleep(2)
+        return {"success": False, "error": f"Failed after {max_retries} attempts: {last_error}"}
 
     def create_shipment(self, shipment_id: int) -> dict:
         if not self.contract:
             return {"success": False, "error": "Contract not loaded - ABI missing"}
         func = self.contract.functions.createShipment(shipment_id)
         tx = self._build_tx(func)
-        return self._send_and_wait(tx)
+        return self._send_with_retry(tx)
 
-    def assign_transporter(self, shipment_id: int, transporter_address: str) -> dict:
+    def assign_transporter(self, shipment_id: int) -> dict:
         if not self.contract:
             return {"success": False, "error": "Contract not loaded - ABI missing"}
-        func = self.contract.functions.assignTransporter(shipment_id, Web3.to_checksum_address(transporter_address))
+        # Use backend wallet as the transporter for custodial wallet MVP
+        func = self.contract.functions.assignTransporter(shipment_id, self.backend_wallet_address)
         tx = self._build_tx(func)
-        return self._send_and_wait(tx)
+        return self._send_with_retry(tx)
 
     def record_pickup(self, shipment_id: int) -> dict:
         if not self.contract:
             return {"success": False, "error": "Contract not loaded - ABI missing"}
         func = self.contract.functions.recordPickup(shipment_id)
         tx = self._build_tx(func)
-        return self._send_and_wait(tx)
+        return self._send_with_retry(tx)
 
     def record_checkpoint(self, shipment_id: int) -> dict:
         if not self.contract:
             return {"success": False, "error": "Contract not loaded - ABI missing"}
         func = self.contract.functions.recordCheckpoint(shipment_id)
         tx = self._build_tx(func)
-        return self._send_and_wait(tx)
+        return self._send_with_retry(tx)
 
-    def transfer_custody(self, shipment_id: int, new_custodian_address: str) -> dict:
+    def transfer_custody(self, shipment_id: int) -> dict:
         if not self.contract:
             return {"success": False, "error": "Contract not loaded - ABI missing"}
-        func = self.contract.functions.transferCustody(shipment_id, Web3.to_checksum_address(new_custodian_address))
+        # Use backend wallet as the new custodian for custodial wallet MVP
+        func = self.contract.functions.transferCustody(shipment_id, self.backend_wallet_address)
         tx = self._build_tx(func)
-        return self._send_and_wait(tx)
+        return self._send_with_retry(tx)
 
     def mark_delivered(self, shipment_id: int) -> dict:
         if not self.contract:
             return {"success": False, "error": "Contract not loaded - ABI missing"}
         func = self.contract.functions.markDelivered(shipment_id)
         tx = self._build_tx(func)
-        return self._send_and_wait(tx)
+        return self._send_with_retry(tx)
 
     def get_shipment_events(self, shipment_id: int) -> List[Dict[str, Any]]:
         if not self.contract:

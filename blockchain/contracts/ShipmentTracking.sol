@@ -1,13 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.20;
 
-contract ShipmentTracking {
+import "@openzeppelin/contracts/access/AccessControl.sol";
+
+contract ShipmentTracking is AccessControl {
+
+    bytes32 public constant ADMIN_ROLE = keccak256("ADMIN_ROLE");
+    bytes32 public constant TRANSPORTER_ROLE = keccak256("TRANSPORTER_ROLE");
+    bytes32 public constant WAREHOUSE_ROLE = keccak256("WAREHOUSE_ROLE");
+    bytes32 public constant DISTRIBUTOR_ROLE = keccak256("DISTRIBUTOR_ROLE");
+    bytes32 public constant RECEIVER_ROLE = keccak256("RECEIVER_ROLE");
 
     enum ShipmentStatus {
         Created,
         Assigned,
         PickedUp,
         InTransit,
+        AtWarehouse,
         CustodyTransferred,
         Delivered
     }
@@ -20,8 +29,6 @@ contract ShipmentTracking {
         ShipmentStatus status;
         uint256 createdAt;
     }
-
-    address public owner;
 
     mapping(uint256 => Shipment) public shipments;
 
@@ -62,8 +69,18 @@ contract ShipmentTracking {
         uint256 timestamp
     );
 
-    modifier onlyOwner() {
-        require(msg.sender == owner, "Only owner can perform this action");
+    modifier onlyAdmin() {
+        require(hasRole(ADMIN_ROLE, msg.sender), "Only admin can perform this action");
+        _;
+    }
+
+    modifier onlyTransporter() {
+        require(hasRole(TRANSPORTER_ROLE, msg.sender), "Only transporter can perform this action");
+        _;
+    }
+
+    modifier onlyCustodian(uint256 shipmentId) {
+        require(shipments[shipmentId].currentCustodian == msg.sender, "Only current custodian can perform this action");
         _;
     }
 
@@ -73,12 +90,13 @@ contract ShipmentTracking {
     }
 
     constructor() {
-        owner = msg.sender;
+        _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
+        _grantRole(ADMIN_ROLE, msg.sender);
     }
 
     function createShipment(
         uint256 shipmentId
-    ) external onlyOwner {
+    ) external onlyAdmin {
         require(
             !shipments[shipmentId].exists,
             "Shipment already exists"
@@ -105,7 +123,7 @@ contract ShipmentTracking {
         address transporter
     )
         external
-        onlyOwner
+        onlyAdmin
         shipmentExists(shipmentId)
     {
         require(
@@ -132,6 +150,7 @@ contract ShipmentTracking {
         uint256 shipmentId
     )
         external
+        onlyTransporter
         shipmentExists(shipmentId)
     {
         Shipment storage shipment = shipments[shipmentId];
@@ -141,13 +160,9 @@ contract ShipmentTracking {
             "Shipment is not assigned"
         );
 
-        /*
-         For this prototype, the backend owner wallet
-         submits blockchain transactions.
-        */
         require(
-            msg.sender == owner,
-            "Only backend owner can record pickup"
+            shipment.currentTransporter == msg.sender,
+            "Caller is not the assigned transporter"
         );
 
         shipment.currentCustodian = shipment.currentTransporter;
@@ -164,6 +179,7 @@ contract ShipmentTracking {
         uint256 shipmentId
     )
         external
+        onlyCustodian(shipmentId)
         shipmentExists(shipmentId)
     {
         Shipment storage shipment = shipments[shipmentId];
@@ -173,13 +189,10 @@ contract ShipmentTracking {
             "No current custodian"
         );
 
-        require(
-            msg.sender == owner,
-            "Only backend owner can record checkpoint"
-        );
-
         if (shipment.status == ShipmentStatus.PickedUp) {
             shipment.status = ShipmentStatus.InTransit;
+        } else if (shipment.status == ShipmentStatus.InTransit) {
+            shipment.status = ShipmentStatus.AtWarehouse;
         }
 
         emit CheckpointRecorded(
@@ -194,14 +207,10 @@ contract ShipmentTracking {
         address newCustodian
     )
         external
+        onlyCustodian(shipmentId)
         shipmentExists(shipmentId)
     {
         Shipment storage shipment = shipments[shipmentId];
-
-        require(
-            msg.sender == owner,
-            "Only backend owner can transfer custody"
-        );
 
         require(
             shipment.currentCustodian != address(0),
@@ -230,14 +239,11 @@ contract ShipmentTracking {
         uint256 shipmentId
     )
         external
+        onlyReceiver
+        onlyCustodian(shipmentId)
         shipmentExists(shipmentId)
     {
         Shipment storage shipment = shipments[shipmentId];
-
-        require(
-            msg.sender == owner,
-            "Only backend owner can mark delivered"
-        );
 
         require(
             shipment.currentCustodian != address(0),
@@ -251,5 +257,30 @@ contract ShipmentTracking {
             shipment.currentCustodian,
             block.timestamp
         );
+    }
+
+    modifier onlyReceiver() {
+        require(hasRole(RECEIVER_ROLE, msg.sender), "Only receiver can perform this action");
+        _;
+    }
+
+    function grantAdminRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(ADMIN_ROLE, account);
+    }
+
+    function grantTransporterRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(TRANSPORTER_ROLE, account);
+    }
+
+    function grantWarehouseRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(WAREHOUSE_ROLE, account);
+    }
+
+    function grantDistributorRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(DISTRIBUTOR_ROLE, account);
+    }
+
+    function grantReceiverRole(address account) external onlyRole(DEFAULT_ADMIN_ROLE) {
+        _grantRole(RECEIVER_ROLE, account);
     }
 }

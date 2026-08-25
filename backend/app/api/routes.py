@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Header, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import Optional
 import uuid
@@ -20,7 +20,7 @@ router = APIRouter()
 
 async def get_current_user(
     db: AsyncSession = Depends(get_db),
-    authorization: Optional[str] = None
+    authorization: Optional[str] = Header(None)
 ) -> User:
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(
@@ -46,7 +46,7 @@ async def get_current_user(
 
 async def get_current_user_optional(
     db: AsyncSession = Depends(get_db),
-    authorization: Optional[str] = None
+    authorization: Optional[str] = Header(None)
 ) -> Optional[User]:
     if not authorization or not authorization.startswith("Bearer "):
         return None

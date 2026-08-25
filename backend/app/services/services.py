@@ -150,10 +150,8 @@ class ShipmentService:
             if not vehicle or vehicle.transporter_id != assign_data.transporter_id:
                 raise ValueError("Invalid vehicle for transporter")
 
-        if not transporter.wallet_address:
-            raise ValueError("Transporter has no wallet address configured")
-
-        chain_result = blockchain_client.assign_transporter(shipment.chain_shipment_ref, transporter.wallet_address)
+        # Use backend wallet for on-chain operations (custodial wallet MVP)
+        chain_result = blockchain_client.assign_transporter(shipment.chain_shipment_ref)
         if not chain_result.get("success"):
             await db.rollback()
             raise Exception(f"Chain transaction failed: {chain_result.get('error')}")
@@ -290,10 +288,11 @@ class ShipmentService:
 
         to_user = await db.execute(select(User).where(User.id == transfer_data.to_user_id))
         to_user = to_user.scalar_one_or_none()
-        if not to_user or not to_user.wallet_address:
-            raise ValueError("Target user not found or has no wallet address")
+        if not to_user:
+            raise ValueError("Target user not found")
 
-        chain_result = blockchain_client.transfer_custody(shipment.chain_shipment_ref, to_user.wallet_address)
+        # Use backend wallet for on-chain operations (custodial wallet MVP)
+        chain_result = blockchain_client.transfer_custody(shipment.chain_shipment_ref)
         if not chain_result.get("success"):
             await db.rollback()
             raise Exception(f"Chain transaction failed: {chain_result.get('error')}")

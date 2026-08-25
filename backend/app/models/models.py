@@ -2,9 +2,42 @@ import enum
 import uuid
 from datetime import datetime
 from sqlalchemy import Column, String, Text, Integer, DateTime, ForeignKey, Enum, Index, BigInteger
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
+from sqlalchemy.types import TypeDecorator, CHAR
 from sqlalchemy.orm import relationship
 from app.db.session import Base
+
+
+class GUID(TypeDecorator):
+    """Platform-independent GUID type.
+    Uses PostgreSQL's UUID type, otherwise uses CHAR(36) for other databases like SQLite.
+    """
+    impl = CHAR
+    cache_ok = True
+
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PG_UUID())
+        else:
+            return dialect.type_descriptor(CHAR(36))
+
+    def process_bind_param(self, value, dialect):
+        if value is None:
+            return value
+        elif dialect.name == 'postgresql':
+            return str(value)
+        else:
+            if not isinstance(value, uuid.UUID):
+                return str(uuid.UUID(value))
+            return str(value)
+
+    def process_result_value(self, value, dialect):
+        if value is None:
+            return value
+        else:
+            if not isinstance(value, uuid.UUID):
+                return uuid.UUID(value)
+            return value
 
 
 class UserRole(str, enum.Enum):
@@ -38,7 +71,7 @@ class EventType(str, enum.Enum):
 class User(Base):
     __tablename__ = "users"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     name = Column(String(255), nullable=False)
     email = Column(String(255), unique=True, nullable=False, index=True)
     password_hash = Column(String(255), nullable=False)
@@ -59,10 +92,10 @@ class User(Base):
 class Vehicle(Base):
     __tablename__ = "vehicles"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
     plate_number = Column(String(50), nullable=False, unique=True)
     type = Column(String(100), nullable=False)
-    transporter_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    transporter_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
 
     transporter = relationship("User", back_populates="vehicles")
     shipments = relationship("Shipment", back_populates="vehicle")
@@ -71,16 +104,16 @@ class Vehicle(Base):
 class Shipment(Base):
     __tablename__ = "shipments"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    chain_shipment_ref = Column(BigInteger, nullable=False, unique=True, index=True)
-    manufacturer_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    chain_shipment_ref = Column(BigInteger, nullable=False, unique=True)
+    manufacturer_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
     origin = Column(Text, nullable=False)
     destination = Column(Text, nullable=False)
     cargo_description = Column(Text, nullable=False)
     quantity = Column(Integer, nullable=False)
-    current_transporter_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    current_custodian_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
-    vehicle_id = Column(UUID(as_uuid=True), ForeignKey("vehicles.id"), nullable=True)
+    current_transporter_id = Column(GUID(), ForeignKey("users.id"), nullable=True)
+    current_custodian_id = Column(GUID(), ForeignKey("users.id"), nullable=True)
+    vehicle_id = Column(GUID(), ForeignKey("vehicles.id"), nullable=True)
     status = Column(Enum(ShipmentStatus), nullable=False, default=ShipmentStatus.CREATED, index=True)
     qr_code_value = Column(String(255), nullable=False, unique=True)
     creation_tx_hash = Column(String(66), nullable=True)
@@ -99,9 +132,9 @@ class Shipment(Base):
 class Checkpoint(Base):
     __tablename__ = "checkpoints"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"), nullable=False, index=True)
-    recorded_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    shipment_id = Column(GUID(), ForeignKey("shipments.id"), nullable=False, index=True)
+    recorded_by = Column(GUID(), ForeignKey("users.id"), nullable=False)
     location = Column(Text, nullable=False)
     note = Column(Text, nullable=True)
     tx_hash = Column(String(66), nullable=True)
@@ -114,10 +147,10 @@ class Checkpoint(Base):
 class CustodyTransfer(Base):
     __tablename__ = "custody_transfers"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"), nullable=False, index=True)
-    from_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
-    to_user_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    shipment_id = Column(GUID(), ForeignKey("shipments.id"), nullable=False, index=True)
+    from_user_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
+    to_user_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
     tx_hash = Column(String(66), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -129,19 +162,13 @@ class CustodyTransfer(Base):
 class ShipmentEvent(Base):
     __tablename__ = "shipment_events"
 
-    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    shipment_id = Column(UUID(as_uuid=True), ForeignKey("shipments.id"), nullable=False, index=True)
+    id = Column(GUID(), primary_key=True, default=uuid.uuid4)
+    shipment_id = Column(GUID(), ForeignKey("shipments.id"), nullable=False, index=True)
     event_type = Column(Enum(EventType), nullable=False)
-    actor_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    actor_id = Column(GUID(), ForeignKey("users.id"), nullable=False)
     tx_hash = Column(String(66), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
     shipment = relationship("Shipment", back_populates="events")
     actor = relationship("User", back_populates="shipment_events")
 
-
-Index("ix_shipments_status", Shipment.status)
-Index("ix_shipments_chain_shipment_ref", Shipment.chain_shipment_ref)
-Index("ix_shipment_events_shipment_id", ShipmentEvent.shipment_id)
-Index("ix_checkpoints_shipment_id", Checkpoint.shipment_id)
-Index("ix_custody_transfers_shipment_id", CustodyTransfer.shipment_id)

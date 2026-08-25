@@ -8,6 +8,7 @@ Create Date: 2026-08-23
 from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
+from app.models.models import GUID
 
 # revision identifiers, used by Alembic.
 revision = '001'
@@ -20,7 +21,7 @@ def upgrade() -> None:
     # Create users table
     op.create_table(
         'users',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', GUID(), nullable=False),
         sa.Column('name', sa.String(length=255), nullable=False),
         sa.Column('email', sa.String(length=255), nullable=False),
         sa.Column('password_hash', sa.String(length=255), nullable=False),
@@ -35,10 +36,10 @@ def upgrade() -> None:
     # Create vehicles table
     op.create_table(
         'vehicles',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', GUID(), nullable=False),
         sa.Column('plate_number', sa.String(length=50), nullable=False),
         sa.Column('type', sa.String(length=100), nullable=False),
-        sa.Column('transporter_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('transporter_id', GUID(), nullable=False),
         sa.ForeignKeyConstraint(['transporter_id'], ['users.id'], ),
         sa.PrimaryKeyConstraint('id'),
         sa.UniqueConstraint('plate_number')
@@ -47,16 +48,16 @@ def upgrade() -> None:
     # Create shipments table
     op.create_table(
         'shipments',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', GUID(), nullable=False),
         sa.Column('chain_shipment_ref', sa.BigInteger(), nullable=False),
-        sa.Column('manufacturer_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('manufacturer_id', GUID(), nullable=False),
         sa.Column('origin', sa.Text(), nullable=False),
         sa.Column('destination', sa.Text(), nullable=False),
         sa.Column('cargo_description', sa.Text(), nullable=False),
         sa.Column('quantity', sa.Integer(), nullable=False),
-        sa.Column('current_transporter_id', postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column('current_custodian_id', postgresql.UUID(as_uuid=True), nullable=True),
-        sa.Column('vehicle_id', postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column('current_transporter_id', GUID(), nullable=True),
+        sa.Column('current_custodian_id', GUID(), nullable=True),
+        sa.Column('vehicle_id', GUID(), nullable=True),
         sa.Column('status', sa.Enum('CREATED', 'ASSIGNED', 'PICKED_UP', 'IN_TRANSIT', 'AT_WAREHOUSE', 'CUSTODY_TRANSFERRED', 'DELIVERED', name='shipmentstatus'), nullable=False),
         sa.Column('qr_code_value', sa.String(length=255), nullable=False),
         sa.Column('creation_tx_hash', sa.String(length=66), nullable=True),
@@ -76,9 +77,9 @@ def upgrade() -> None:
     # Create checkpoints table
     op.create_table(
         'checkpoints',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('shipment_id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('recorded_by', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', GUID(), nullable=False),
+        sa.Column('shipment_id', GUID(), nullable=False),
+        sa.Column('recorded_by', GUID(), nullable=False),
         sa.Column('location', sa.Text(), nullable=False),
         sa.Column('note', sa.Text(), nullable=True),
         sa.Column('tx_hash', sa.String(length=66), nullable=True),
@@ -92,10 +93,10 @@ def upgrade() -> None:
     # Create custody_transfers table
     op.create_table(
         'custody_transfers',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('shipment_id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('from_user_id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('to_user_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', GUID(), nullable=False),
+        sa.Column('shipment_id', GUID(), nullable=False),
+        sa.Column('from_user_id', GUID(), nullable=False),
+        sa.Column('to_user_id', GUID(), nullable=False),
         sa.Column('tx_hash', sa.String(length=66), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['from_user_id'], ['users.id'], ),
@@ -108,10 +109,10 @@ def upgrade() -> None:
     # Create shipment_events table
     op.create_table(
         'shipment_events',
-        sa.Column('id', postgresql.UUID(as_uuid=True), nullable=False),
-        sa.Column('shipment_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('id', GUID(), nullable=False),
+        sa.Column('shipment_id', GUID(), nullable=False),
         sa.Column('event_type', sa.Enum('CREATED', 'ASSIGNED', 'PICKED_UP', 'CHECKPOINT', 'CUSTODY_TRANSFER', 'DELIVERED', name='eventtype'), nullable=False),
-        sa.Column('actor_id', postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column('actor_id', GUID(), nullable=False),
         sa.Column('tx_hash', sa.String(length=66), nullable=True),
         sa.Column('created_at', sa.DateTime(), nullable=False),
         sa.ForeignKeyConstraint(['actor_id'], ['users.id'], ),
@@ -135,7 +136,8 @@ def downgrade() -> None:
     op.drop_index('ix_users_email', table_name='users')
     op.drop_table('users')
     
-    # Drop enums
-    op.execute("DROP TYPE IF EXISTS userrole")
-    op.execute("DROP TYPE IF EXISTS shipmentstatus")
-    op.execute("DROP TYPE IF EXISTS eventtype")
+    # Drop enums (PostgreSQL only; SQLite renders enums as VARCHAR)
+    if op.get_context().bind.dialect.name == 'postgresql':
+        op.execute("DROP TYPE IF EXISTS userrole")
+        op.execute("DROP TYPE IF EXISTS shipmentstatus")
+        op.execute("DROP TYPE IF EXISTS eventtype")

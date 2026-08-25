@@ -34,10 +34,10 @@ class BlockchainClient:
     def is_connected(self) -> bool:
         return self.w3.is_connected()
 
-    def _build_tx(self, func, *args, **kwargs) -> dict:
+    def _build_tx(self, func) -> dict:
         nonce = self.w3.eth.get_transaction_count(self.account.address)
-        gas_estimate = func(*args, **kwargs).estimate_gas({"from": self.account.address})
-        return func(*args, **kwargs).build_transaction({
+        gas_estimate = func.estimate_gas({"from": self.account.address})
+        return func.build_transaction({
             "from": self.account.address,
             "nonce": nonce,
             "gas": int(gas_estimate * 1.2),
